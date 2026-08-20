@@ -8,6 +8,12 @@ STOPWORDS = {
     "that", "are", "be", "will", "our", "their", "his", "her", "team", "meeting"
 }
 
+NON_PERSON_WORDS = {
+    "Good", "Finally", "Once", "Today", "Tomorrow", "Monday", "Tuesday",
+    "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Next",
+    "The", "We", "It", "This", "That",
+}
+
 
 def clean_transcript(text: str) -> str:
     if not text:
@@ -21,25 +27,32 @@ def split_sentences(text: str) -> List[str]:
 
 def infer_deadline(sentence: str) -> str:
     lower = sentence.lower()
-    if "tomorrow" in lower:
-        return "Tomorrow"
-    if "friday" in lower:
-        return "Friday"
-    if "monday" in lower:
-        return "Monday"
-    if "before review" in lower or "before the review" in lower:
-        return "Before review"
-    if re.search(r"\bby\s+\w+\s+\d{1,2}\b", lower):
-        return "By date"
-    if "next meeting" in lower:
-        return "Next meeting"
-    return "Next update"
+    patterns = [
+        r"\b(?:by|on|before|after)\s+((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:\s+[a-z]+)?(?:\s+\d{4})?)",
+        r"\b(?:by|on|before|after)\s+((?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+\d{4})?)",
+        r"\b(?:by|on|before|after)\s+(\d{1,2}(?:st|nd|rd|th)?\s+[a-z]+(?:\s+\d{4})?)",
+        r"\b(today|tomorrow)\b",
+        r"\b(\d{1,2}:\d{2}(?:\s*[ap]m)?)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, lower, re.IGNORECASE)
+        if match:
+            return " ".join(part.capitalize() for part in match.group(1).strip(" .,!? ").split())
+    return ""
 
 
 def infer_owner(sentence: str) -> str:
-    matches = re.findall(r"\b[A-Z][a-z]+\b", sentence)
-    owners = [name for name in matches if name.lower() not in {"The", "We", "It", "This", "That"}]
-    return owners[0] if owners else "Unassigned"
+    matches = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", sentence)
+    owners = [name for name in matches if name.split()[0] not in NON_PERSON_WORDS]
+    return owners[0] if owners else ""
+
+
+def normalize_owner(owner: str, task: str) -> str:
+    candidate = re.sub(r"\s+", " ", (owner or "").strip()).strip(" .,;:-")
+    if candidate and re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}", candidate):
+        if candidate.split()[0] not in NON_PERSON_WORDS:
+            return candidate
+    return infer_owner(task)
 
 
 def extract_topics(text: str) -> List[str]:
@@ -89,7 +102,7 @@ def extract_action_items(text: str) -> List[List[str]]:
 
     if not action_items:
         for sentence in sentences[:3]:
-            action_items.append([sentence, "Unassigned", "Next update"])
+            action_items.append([sentence, "", ""])
 
     return action_items[:5]
 

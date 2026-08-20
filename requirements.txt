@@ -1,9 +1,12 @@
 streamlit
 python-dotenv
 openai
+google-genai
 pydantic
 azure-ai-textanalytics
 azure-core
+azure-cognitiveservices-speech
 streamlit-webrtc
 SpeechRecognition
 pydub
+imageio-ffmpeg

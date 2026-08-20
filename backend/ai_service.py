@@ -1,15 +1,26 @@
 import json
 import re
 
-from config import AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_ENDPOINT
+from config import (
+    AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+)
 from backend.prompts import ACTION_PROMPT, DECISION_PROMPT, SUMMARY_PROMPT
-from backend.text_analysis import clean_transcript, extract_action_items, extract_decisions, extract_topics, split_sentences
+from backend.text_analysis import clean_transcript, extract_action_items, extract_decisions, extract_topics, infer_deadline, normalize_owner, split_sentences
 
 
 try:
     from openai import AzureOpenAI
 except ImportError:  # pragma: no cover
     AzureOpenAI = None
+
+try:
+    from google import genai
+except ImportError:  # pragma: no cover
+    genai = None
 
 
 def _fallback_summary(transcript: str, topics: list[str]) -> str:
@@ -57,15 +68,34 @@ def _call_openai(prompt: str, transcript: str):
         return None
 
 
+def _call_gemini(prompt: str, transcript: str):
+    if not GEMINI_API_KEY or not GEMINI_MODEL or genai is None:
+        return None
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=f"{prompt}\n\nMeeting transcript:\n{transcript}",
+        )
+        return response.text
+    except Exception:
+        return None
+
+
+def _call_ai(prompt: str, transcript: str):
+    return _call_openai(prompt, transcript) or _call_gemini(prompt, transcript)
+
+
 def _extract_summary(transcript: str, topics: list[str]) -> str:
-    llm_content = _call_openai(SUMMARY_PROMPT, transcript)
+    llm_content = _call_ai(SUMMARY_PROMPT, transcript)
     if llm_content:
         return llm_content.strip().strip('"')
     return _fallback_summary(transcript, topics)
 
 
 def _extract_decisions(transcript: str) -> list[str]:
-    llm_content = _call_openai(DECISION_PROMPT, transcript)
+    llm_content = _call_ai(DECISION_PROMPT, transcript)
     if llm_content:
         try:
             parsed = json.loads(llm_content)
@@ -78,7 +108,7 @@ def _extract_decisions(transcript: str) -> list[str]:
 
 
 def _extract_actions(transcript: str) -> list[list[str]]:
-    llm_content = _call_openai(ACTION_PROMPT, transcript)
+    llm_content = _call_ai(ACTION_PROMPT, transcript)
     if llm_content:
         try:
             parsed = json.loads(llm_content)
@@ -86,10 +116,13 @@ def _extract_actions(transcript: str) -> list[list[str]]:
                 result = []
                 for item in parsed:
                     if isinstance(item, dict):
+                        task = str(item.get("task", "Follow up on discussion")).strip()
+                        owner = normalize_owner(str(item.get("owner", "")), task)
+                        deadline = infer_deadline(task)
                         result.append([
-                            str(item.get("task", "Follow up on discussion")).strip(),
-                            str(item.get("owner", "Unassigned")).strip() or "Unassigned",
-                            str(item.get("deadline", "Next update")).strip() or "Next update",
+                            task,
+                            owner,
+                            deadline,
                         ])
                 if result:
                     return result
